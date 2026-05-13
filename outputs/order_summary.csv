@@ -1,0 +1,6 @@
+batchid,salesid,accountnum,custname,itemid,product,planned_batch_start_date,planned_batch_end_date,earlieststartdate,due_date,priority,qty,total_batch_production_days,max_days_late,status
+US10202562-7700079-B001,US10202562,500016,Colibrium Additive,7700079,Light Engine LRS MCx 4K UV 405nm with PL LRS 4KS 4.6 Cust 1,2026-05-08,2026-05-29,,2026-06-12,1,8,15.0,0,on time
+US10202562-7700079-B002,US10202562,500016,Colibrium Additive,7700079,Light Engine LRS MCx 4K UV 405nm with PL LRS 4KS 4.6 Cust 1,2026-05-29,2026-06-19,2026-05-29,2026-07-15,1,8,15.0,0,on time
+US10202562-7700079-B003,US10202562,500016,Colibrium Additive,7700079,Light Engine LRS MCx 4K UV 405nm with PL LRS 4KS 4.6 Cust 1,2026-06-19,2026-07-10,2026-06-05,2026-08-05,1,8,15.0,0,on time
+US10202561-7700065-B001,US10202561,500038,Crane Currency,7700065,Light Engine LRS Mcx V2 UV 380nm with PL LRS 4.6,2026-07-10,2026-07-29,2026-07-01,2026-08-24,2,12,13.0,0,on time
+US10209999-7700079-B001,US10209999,500016,Colibrium Additive,7700079,Light Engine LRS MCx 4K UV 405nm with PL LRS 4KS 4.6 Cust 1,2026-07-29,2026-08-19,2026-06-05,2026-12-31,2,8,15.0,0,on time
