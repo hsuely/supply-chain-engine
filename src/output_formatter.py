@@ -4,6 +4,52 @@ from calendar_utils import (
     add_working_days_ceiling
 )
 
+def build_non_production_summary(non_production_orders):
+    """
+    converts non production rows into summary format
+    """
+
+    if non_production_orders.empty:
+        return pd.DataFrame()
+
+    output = non_production_orders.copy()
+
+    # format dates
+    output['due_date'] = pd.to_datetime(output['date']).dt.date
+
+    if 'earlieststartdate' in output.columns:
+        output['earlieststartdate'] = pd.to_datetime(
+            output['earlieststartdate']
+        ).dt.date
+
+    # match summary table structure
+    output['batchid'] = ''
+    output['planned_batch_start_date'] = output['due_date']
+    output['planned_batch_end_date'] = output['due_date']
+    output['max_days_late'] = 0
+    output['status'] = 'passthrough'
+
+    desired_columns = [
+        'batchid',
+        'salesid',
+        'accountnum',
+        'custname',
+        'itemid',
+        'product',
+        'qty',
+        'priority',
+        'prod',
+        'earlieststartdate',
+        'due_date',
+        'planned_batch_start_date',
+        'planned_batch_end_date',
+        'max_days_late',
+        'status'
+    ]
+
+    existing_columns = [col for col in desired_columns if col in output.columns]
+
+    return output[existing_columns]
 
 def format_operations_schedule(schedule_df, schedule_start_date):
     """
@@ -93,6 +139,7 @@ def build_order_summary(operations_schedule_df):
             earlieststartdate=('earlieststartdate', 'max'),
             due_date=('due_date', 'max'),
             priority=('priority', 'min'),
+            prod=('prod', 'max'),
             qty=('qty', 'max'),
             total_batch_production_days=('total_production_days', 'sum'),
             max_days_late=('days_late', 'max')

@@ -40,7 +40,10 @@ def load_and_prepare_data():
     # read capacity (empty right now)
     capacity = pd.read_csv(capacity_path)
 
-    # only keep orders marked with production
+    # separate non production orders
+    non_production_orders = orders[orders["prod"] == 0].copy()
+
+    # only keep orders marked with production for the scheduler
     orders = orders[orders['prod'] == 1].copy()
 
     # sort orders for setting batch numbers
@@ -104,4 +107,4 @@ def load_and_prepare_data():
         ]
     ).reset_index(drop=True)
 
-    return df, capacity
+    return df, non_production_orders, capacity

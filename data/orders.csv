@@ -1,7 +1,15 @@
 ﻿salesid,accountnum,custname,itemid,qty,earlieststartdate,date,product,prod,priority
-US10202562,500016,Colibrium Additive,7700079,8,,6/12/2026,Light Engine LRS MCx 4K UV 405nm with PL LRS 4KS 4.6 Cust 1,1,1
-US10202562,500016,Colibrium Additive,7700079,8,5/29/2026,7/15/2026,Light Engine LRS MCx 4K UV 405nm with PL LRS 4KS 4.6 Cust 1,1,1
+US10202562,500016,Colibrium Additive,7700079,8,,7/15/2026,Light Engine LRS MCx 4K UV 405nm with PL LRS 4KS 4.6 Cust 1,1,1
 US10202562,500016,Colibrium Additive,7700079,8,6/5/2026,8/5/2026,Light Engine LRS MCx 4K UV 405nm with PL LRS 4KS 4.6 Cust 1,1,1
 US10209999,500016,Colibrium Additive,7700079,8,6/5/2026,12/31/2026,Light Engine LRS MCx 4K UV 405nm with PL LRS 4KS 4.6 Cust 1,1,2
 US10202561,500038,Crane Currency,7700065,12,7/1/2026,8/24/2026,Light Engine LRS Mcx V2 UV 380nm with PL LRS 4.6,1,2
-US10202481,500069,University of Texas Austin,7700053,1,,5/11/2026,Light Engine LRS WQ DL UV-365nm UV-405nm with PL WQ 2.0 HC,0,2
+US10202481,500069,University of Texas Austin,7700053,1,,5/29/2026,Light Engine LRS WQ DL UV-365nm UV-405nm with PL WQ 2.0 HC,0,2
+US10202611,500270,Trio Labs,7700080,4,,11/30/2026,Light Engine LRS MCx 4K UV 385nm with PL LRS 4K 1.1,1,2
+Forecast,500070,3D SYSTEMS-BIO,7700048,2,,12/31/2026,Light Engine LRS MCx WQ UV 383nm with PL LRS 0.36 HC Cust 1,1,2
+Forecast,500009,Carbon3D,7700077,3,,9/30/2026,Light Engine LRS MCx 4K UV 385nm with PL LRS 4K 14.1,1,2
+Forecast,500009,Carbon3D,7700077,5,,12/31/2026,Light Engine LRS MCx 4K UV 385nm with PL LRS 4K 14.1,1,2
+Forecast,500017,Holo,7700054,2,,9/30/2026,Light Engine LRS MCx 4K UV 385nm with PL LRS 4K 4.6,1,2
+Forecast,500303,Marcom,7700031,1,,9/30/2026,Light Engine LRS MCx 4K UV 405nm with PL LRS 11.7,1,2
+Forecast,500021,Oak Ridge Natl Lab,7700051,1,,7/31/2026,Light Engine LRS MCx 4K UV 405nm with PL LRS 4K 4.6,1,2
+Forecast,500301,Auxilium Biotechologies,7700065,4,,8/31/2026,Light Engine LRS Mcx V2 UV 380nm with PL LRS 4.6,1,2
+Forecast ,500016,Colibrium Additive,7700079,10,,9/30/2026,Light Engine LRS MCx 4K UV 405nm with PL LRS 4KS 4.6 Cust 1,1,1

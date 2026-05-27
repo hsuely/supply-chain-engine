@@ -229,6 +229,7 @@ def build_schedule(df, schedule_start_date):
             'sequence': row['sequence'],
             'qty': row['qty'],
             'priority': row['priority'],
+            'prod':row['prod'],
             'earlieststartdate': row['earlieststartdate'],
             'due_date': row['date'],
             'total_production_days': row['total_production_days'],

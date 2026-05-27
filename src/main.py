@@ -5,6 +5,7 @@ from data_loader import load_and_prepare_data
 from scheduler import build_schedule
 from output_formatter import (
     format_operations_schedule,
+    build_non_production_summary,
     build_order_summary
 )
 
@@ -14,14 +15,14 @@ OUTPUT_DIR = BASE_DIR / 'outputs'
 
 # Change this to the date you want the schedule to begin.
 # Must be parseable as a date.
-SCHEDULE_START_DATE = '2026-05-08'
+SCHEDULE_START_DATE = '2026-05-27'
 
 
 def main():
     OUTPUT_DIR.mkdir(exist_ok=True)
 
     # 1. Load and prepare order/routing data
-    df, capacity = load_and_prepare_data()
+    df, non_production_orders, capacity = load_and_prepare_data()
 
     print('\n=== LOADED DATA ===')
     print(
@@ -93,13 +94,38 @@ def main():
                 'planned_start_date',
                 'planned_end_date',
                 'days_late',
-                'status'
+                'status',
             ]
         ]
     )
 
     # 4. Build batch-level summary
-    order_summary_df = build_order_summary(operations_schedule_df)
+    scheduled_summary_df = build_order_summary(operations_schedule_df)
+    non_production_summary_df = build_non_production_summary(non_production_orders)
+    order_summary_df = pd.concat(
+        [scheduled_summary_df, non_production_summary_df],
+        ignore_index=True,
+        sort=False
+    )
+
+    order_summary_df = order_summary_df.sort_values(
+        [
+            'planned_batch_start_date',
+            'priority',
+            'due_date',
+            'prod',
+            'salesid',
+            'itemid'
+        ],
+        ascending=[
+            True,
+            True,
+            True,
+            False,
+            True,
+            True
+        ]
+    ).reset_index(drop=True)
 
     print('\n=== ORDER SUMMARY ===')
     print(
