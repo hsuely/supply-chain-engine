@@ -5,9 +5,15 @@ from pathlib import Path
 
 def load_and_prepare_data():
     """
-    load and prepare data for use in scheduler
-    takes orders and cycle_times and merges the two
-    capacity is not considered at this time
+    Load and prepare data for use in scheduler.
+
+    This function:
+    - loads order demand
+    - separates prod = 1 and prod = 0 rows
+    - creates batch IDs
+    - expands production orders into operation rows using cycle_times
+    - merges process requirements onto each operation
+    - loads labor/resources, work centers, and resource eligibility tables
     """
 
     # set directory
@@ -16,7 +22,10 @@ def load_and_prepare_data():
     # load csv files
     orders_path = BASE_DIR / 'data' / 'orders.csv'
     cycle_times_path = BASE_DIR / 'data' / 'cycle_times.csv'
-    capacity_path = BASE_DIR / 'data' / 'capacity.csv'
+    processes_path = BASE_DIR / 'data' / 'processes.csv'
+    resources_path = BASE_DIR / 'data' / 'resources.csv'
+    workcenters_path = BASE_DIR / 'data' / 'workcenters.csv'
+    resource_process_eligibility_path = BASE_DIR / 'data' / 'resource_process_eligibility.csv'
 
     # read orders, define dates, define descriptive columns
     orders = pd.read_csv(
@@ -37,11 +46,42 @@ def load_and_prepare_data():
         }
     )
 
-    # read capacity (empty right now)
-    capacity = pd.read_csv(capacity_path)
+    # read process requirements
+    processes = pd.read_csv(
+        processes_path,
+        dtype={
+            'process': str
+        }
+    )
+
+    # read labor resources
+    resources = pd.read_csv(
+        resources_path,
+        dtype={
+            'resourceid': str
+        }
+    )
+
+    # read physical work centers
+    workcenters = pd.read_csv(
+        workcenters_path,
+        dtype={
+            'workcenterid': str,
+            'process': str
+        }
+    )
+
+    # read which resources can perform which processes
+    resource_process_eligibility = pd.read_csv(
+        resource_process_eligibility_path,
+        dtype={
+            'resourceid': str,
+            'process': str
+        }
+    )
 
     # separate non production orders
-    non_production_orders = orders[orders["prod"] == 0].copy()
+    non_production_orders = orders[orders['prod'] == 0].copy()
 
     # only keep orders marked with production for the scheduler
     orders = orders[orders['prod'] == 1].copy()
@@ -69,8 +109,20 @@ def load_and_prepare_data():
         + orders['batch_number'].astype(str).str.zfill(3)
     )
 
+    # add process requirements to each cycle time row
+    cycle_times = cycle_times.merge(
+        processes,
+        on='process',
+        how='left'
+    )
+
     # merge with cycle_times for batch/operations combinations
     df = orders.merge(cycle_times, on='itemid', how='left')
+
+    # validate that every scheduled item has cycle time rows
+    if df['sequence'].isnull().any():
+        missing_items = df[df['sequence'].isnull()]['itemid'].unique()
+        raise ValueError(f'Missing cycle time rows for itemids: {missing_items}')
 
     # calculate operations times based on qty
     df['total_production_days'] = (
@@ -107,4 +159,4 @@ def load_and_prepare_data():
         ]
     ).reset_index(drop=True)
 
-    return df, non_production_orders, capacity
+    return df, non_production_orders, resources, workcenters, resource_process_eligibility

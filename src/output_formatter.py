@@ -36,14 +36,20 @@ def build_non_production_summary(non_production_orders):
         'custname',
         'itemid',
         'product',
+        'process',
+        'sequence',
+        'assigned_resource',
+        'assigned_workcenter',
         'qty',
         'priority',
-        'prod',
         'earlieststartdate',
         'due_date',
-        'planned_batch_start_date',
-        'planned_batch_end_date',
-        'max_days_late',
+        'total_production_days',
+        'start_day',
+        'end_day',
+        'planned_start_date',
+        'planned_end_date',
+        'days_late',
         'status'
     ]
 
@@ -110,6 +116,25 @@ def format_operations_schedule(schedule_df, schedule_start_date):
     remaining_columns = [col for col in output.columns if col not in existing_columns]
 
     output = output[existing_columns + remaining_columns]
+
+    # sort operations in chronological schedule order
+    output = output.sort_values(
+        [
+            'start_day',
+            'assigned_resource',
+            'assigned_workcenter',
+            'batchid',
+            'sequence'
+        ],
+        ascending=[
+            True,
+            True,
+            True,
+            True,
+            True
+        ],
+        na_position='last'
+    ).reset_index(drop=True)
 
     return output
 

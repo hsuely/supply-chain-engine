@@ -47,7 +47,5 @@ itemid,cycle_time_days,process,sequence
 7700081,0.5,test,2
 7700081,1,burnin,3
 7700081,1,fqc,4
-RMA,0.25,assy,1
-RMA,0.5,test,2
-RMA,1,burnin,3
-RMA,1,fqc,4
+RMA1,0.5,rework,1
+RMA2,1,rework,1

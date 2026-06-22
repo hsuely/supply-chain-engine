@@ -2,7 +2,7 @@ from ortools.sat.python import cp_model
 import pandas as pd
 
 
-SCALE = 100
+SCALE = 4
 
 def working_day_offset(schedule_start_date, target_date):
     """
@@ -32,7 +32,11 @@ def working_day_offset(schedule_start_date, target_date):
     return offset
 
 
-def build_schedule(df, schedule_start_date):
+def build_schedule(df,
+                   resources,
+                   workcenters,
+                   resource_process_eligibility,
+                   schedule_start_date):
 
     model = cp_model.CpModel()
 
@@ -60,24 +64,42 @@ def build_schedule(df, schedule_start_date):
     ).astype(int)
 
     # set maximum possible schedule length, maximum earlieststartdate + duration of all batches + 10 day buffer
-    horizon = int(df['duration_int'].sum() + df['earliest_start_int'].max() + 1000)
+    buffer_days = 10
+
+    horizon = int(
+        df['duration_int'].sum()
+        + df['earliest_start_int'].max()
+        + buffer_days * SCALE
+    )
 
     tasks = {}
-    machine_to_intervals = {}
-    batch_intervals = []
+    resource_to_intervals = {}
+    workcenter_pool_to_intervals = {}
+    workcenter_pool_to_demands = {}
     batch_info = {}
+
     """
-    tasks = each batch operation step and it's parameters (start, end, interval, duration)
-    machine_to_intervals = maps processes to intervals, helps with ensuring no or limited overlap to prevent overallocation of resources
-    batch_intervals = sets a full interval for a batch from start to end of all tasks
-    batch_info = provides the key data for a batch for easy access within the solver
+    tasks = each batch operation step and its solver parameters
+    resource_to_intervals = maps labor resources to assigned operation intervals
+    workcenter_to_intervals = maps physical workcenters to assigned operation intervals
+    workcenter_to_demands = demand values used for workcenter cumulative capacity
+    batch_info = key batch-level data used in the objective function
     """
+
+    # calculate pooled workcenter capacity by process
+    workcenter_pool_capacity = (
+        workcenters
+        .groupby('process')['capacity']
+        .sum()
+        .astype(int)
+        .to_dict()
+    )
 
     # create one task for each batch's routing rows
     for idx, row in df.iterrows():
         batchid = row['batchid']
         sequence = int(row['sequence'])
-        work_center = f'Process{sequence}'
+        process = row['process']
 
         start = model.NewIntVar(0, horizon, f'start_{idx}')
         end = model.NewIntVar(0, horizon, f'end_{idx}')
@@ -91,14 +113,61 @@ def build_schedule(df, schedule_start_date):
 
         tasks[idx] = {
             'batchid': batchid,
+            'process': process,
             'sequence': sequence,
             'start': start,
             'end': end,
             'interval': interval,
-            'duration': int(row['duration_int'])
+            'duration': int(row['duration_int']),
+            'resource_choices': {},
+            'assigned_workcenter_pool': None
         }
 
-        machine_to_intervals.setdefault(work_center, []).append(interval)
+        # determine list of eligible resources for this task
+        eligible_resources = (
+            resource_process_eligibility[
+                resource_process_eligibility['process'] == process
+                ]['resourceid']
+            .tolist()
+        )
+
+        # selects an eligible resource for the task
+        if int(row['labor_required']) > 0:
+            if not eligible_resources:
+                raise ValueError(f'No eligible resources found for process: {process}')
+
+            resource_presence_vars = []
+
+            for resourceid in eligible_resources:
+                resource_presence = model.NewBoolVar(
+                    f'assigned_{idx}_{resourceid}'
+                )
+
+                resource_interval = model.NewOptionalIntervalVar(
+                    start,
+                    int(row['duration_int']),
+                    end,
+                    resource_presence,
+                    f'interval_{idx}_{resourceid}'
+                )
+
+                tasks[idx]['resource_choices'][resourceid] = resource_presence
+
+                resource_to_intervals.setdefault(resourceid, []).append(
+                    resource_interval
+                )
+
+                resource_presence_vars.append(resource_presence)
+
+            model.AddExactlyOne(resource_presence_vars)
+
+        # assigns workcenter for the task if the process requires it
+        workcenter_capacity = int(workcenter_pool_capacity.get(process, 0))
+
+        if workcenter_capacity > 0:
+            workcenter_pool_to_intervals.setdefault(process, []).append(interval)
+            workcenter_pool_to_demands.setdefault(process, []).append(1)
+            tasks[idx]['assigned_workcenter_pool'] = f'{process}_pool'
 
     # rule: each batch must be run in sequence until fully complete
     for batchid in df['batchid'].unique():
@@ -109,7 +178,7 @@ def build_schedule(df, schedule_start_date):
             next_idx = batch_rows.index[i + 1]
 
             model.Add(
-                tasks[next_idx]['start'] == tasks[current_idx]['end']
+                tasks[next_idx]['start'] >= tasks[current_idx]['end']
             )
 
     # rule: first step of a batch cannot be before its earliest start date
@@ -121,21 +190,10 @@ def build_schedule(df, schedule_start_date):
 
         earliest_start_int = int(batch_rows['earliest_start_int'].max())
         due_date_int = int(batch_rows['due_date_int'].min())
-        total_duration_int = int(batch_rows['duration_int'].sum())
 
         model.Add(
             tasks[first_idx]['start'] >= earliest_start_int
         )
-
-        # create batch-level interval spanning all operations
-        batch_interval = model.NewIntervalVar(
-            tasks[first_idx]['start'],
-            total_duration_int,
-            tasks[last_idx]['end'],
-            f'batch_interval_{batchid}'
-        )
-
-        batch_intervals.append(batch_interval)
 
         batch_info[batchid] = {
             'first_idx': first_idx,
@@ -145,12 +203,24 @@ def build_schedule(df, schedule_start_date):
             'qty': int(batch_rows['qty'].max())
         }
 
-    # rule: no two batches can run at the same time
-    model.AddNoOverlap(batch_intervals)
-
-    # rule: no overlap in processes (enforced by earlier rule, but will matter with additional resources)
-    for work_center, intervals in machine_to_intervals.items():
+    # rule: each labor resource can only work on one operation at a time
+    for resourceid, intervals in resource_to_intervals.items():
         model.AddNoOverlap(intervals)
+
+    # rule: each workcenter process pool cannot exceed its total capacity
+    for process, intervals in workcenter_pool_to_intervals.items():
+        capacity_value = int(workcenter_pool_capacity[process])
+
+        if capacity_value == 1:
+            model.AddNoOverlap(intervals)
+        else:
+            demands = workcenter_pool_to_demands[process]
+
+            model.AddCumulative(
+                intervals,
+                demands,
+                capacity_value
+            )
 
     # objective_terms = optimization paramters
     # optimze by priority, due dates, and quantity
@@ -202,8 +272,19 @@ def build_schedule(df, schedule_start_date):
     objective_terms.append(makespan)
     model.Minimize(sum(objective_terms))
 
+    # help with runtime, start early orders first
+    model.AddDecisionStrategy(
+        [tasks[idx]['start'] for idx in tasks],
+        cp_model.CHOOSE_LOWEST_MIN,
+        cp_model.SELECT_MIN_VALUE
+    )
+
     # solver object
     solver = cp_model.CpSolver()
+
+    # solver time limits
+    solver.parameters.max_time_in_seconds = 30
+    solver.parameters.num_search_workers = 8
 
     # attempts solving the schedule storing best outcome
     status = solver.Solve(model)
@@ -219,6 +300,17 @@ def build_schedule(df, schedule_start_date):
 
     # output results
     for idx, row in df.iterrows():
+        assigned_resource = None
+
+        for resourceid, presence_var in tasks[idx]['resource_choices'].items():
+            if solver.Value(presence_var) == 1:
+                assigned_resource = resourceid
+                break
+
+        assigned_workcenter = None
+
+        assigned_workcenter = tasks[idx]['assigned_workcenter_pool']
+
         results.append({
             'batchid': row['batchid'],
             'salesid': row['salesid'],
@@ -227,9 +319,12 @@ def build_schedule(df, schedule_start_date):
             'itemid': row['itemid'],
             'product': row['product'],
             'sequence': row['sequence'],
+            'process': row['process'],
+            'assigned_resource': assigned_resource,
+            'assigned_workcenter': assigned_workcenter,
             'qty': row['qty'],
             'priority': row['priority'],
-            'prod':row['prod'],
+            'prod': row['prod'],
             'earlieststartdate': row['earlieststartdate'],
             'due_date': row['date'],
             'total_production_days': row['total_production_days'],

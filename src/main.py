@@ -1,4 +1,5 @@
 from pathlib import Path
+import time
 import pandas as pd
 
 from data_loader import load_and_prepare_data
@@ -19,10 +20,11 @@ SCHEDULE_START_DATE = '2026-06-08'
 
 
 def main():
+    start_time = time.perf_counter()
     OUTPUT_DIR.mkdir(exist_ok=True)
 
-    # 1. Load and prepare order/routing data
-    df, non_production_orders, capacity = load_and_prepare_data()
+    # 1. Load and prepare order/routing/resource data
+    df, non_production_orders, resources, workcenters, resource_process_eligibility = load_and_prepare_data()
 
     print('\n=== LOADED DATA ===')
     print(
@@ -34,11 +36,14 @@ def main():
                 'custname',
                 'itemid',
                 'product',
+                'process',
+                'sequence',
                 'qty',
                 'priority',
                 'earlieststartdate',
                 'date',
-                'sequence',
+                'labor_required',
+                'workcenter_required',
                 'total_production_days'
             ]
         ]
@@ -47,6 +52,9 @@ def main():
     # 2. Run OR-Tools scheduler
     schedule_results = build_schedule(
         df,
+        resources,
+        workcenters,
+        resource_process_eligibility,
         schedule_start_date=SCHEDULE_START_DATE
     )
 
@@ -59,7 +67,10 @@ def main():
                 'batchid',
                 'salesid',
                 'itemid',
+                'process',
                 'sequence',
+                'assigned_resource',
+                'assigned_workcenter',
                 'qty',
                 'priority',
                 'earlieststartdate',
@@ -86,7 +97,10 @@ def main():
                 'custname',
                 'itemid',
                 'product',
+                'process',
                 'sequence',
+                'assigned_resource',
+                'assigned_workcenter',
                 'qty',
                 'priority',
                 'earlieststartdate',
@@ -94,7 +108,7 @@ def main():
                 'planned_start_date',
                 'planned_end_date',
                 'days_late',
-                'status',
+                'status'
             ]
         ]
     )
@@ -162,6 +176,9 @@ def main():
     print(f'Operations schedule: {operations_schedule_path}')
     print(f'Order summary: {order_summary_path}')
 
+    end_time = time.perf_counter()
+    runtime_seconds = end_time - start_time
+    print(f'\nTotal runtime: {runtime_seconds:.2f} seconds')
 
 if __name__ == '__main__':
     main()
