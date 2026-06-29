@@ -16,7 +16,7 @@ OUTPUT_DIR = BASE_DIR / 'outputs'
 
 # Change this to the date you want the schedule to begin.
 # Must be parseable as a date.
-SCHEDULE_START_DATE = '2026-06-08'
+SCHEDULE_START_DATE = '2026-06-24'
 
 
 def main():
