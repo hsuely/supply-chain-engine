@@ -13,7 +13,7 @@ def load_and_prepare_data():
     - creates batch IDs
     - expands production orders into operation rows using cycle_times
     - merges process requirements onto each operation
-    - loads labor/resources, work centers, and resource eligibility tables
+    - loads workcenter capacity and labor capacity by process
     """
 
     # set directory
@@ -23,9 +23,10 @@ def load_and_prepare_data():
     orders_path = BASE_DIR / 'data' / 'orders.csv'
     cycle_times_path = BASE_DIR / 'data' / 'cycle_times.csv'
     processes_path = BASE_DIR / 'data' / 'processes.csv'
-    resources_path = BASE_DIR / 'data' / 'resources.csv'
     workcenters_path = BASE_DIR / 'data' / 'workcenters.csv'
-    resource_process_eligibility_path = BASE_DIR / 'data' / 'resource_process_eligibility.csv'
+    workcenter_eligibility_path = BASE_DIR / 'data' / 'workcenter_eligibility.csv'
+    labor_capacity_path = BASE_DIR / 'data' / 'labor_capacity.csv'
+    labor_eligibility_path = BASE_DIR / 'data' / 'labor_eligibility.csv'
 
     # read orders, define dates, define descriptive columns
     orders = pd.read_csv(
@@ -54,28 +55,37 @@ def load_and_prepare_data():
         }
     )
 
-    # read labor resources
-    resources = pd.read_csv(
-        resources_path,
-        dtype={
-            'resourceid': str
-        }
-    )
 
     # read physical work centers
     workcenters = pd.read_csv(
         workcenters_path,
         dtype={
             'workcenterid': str,
+        }
+    )
+
+    # read which workcenters can support which processes
+    workcenter_eligibility = pd.read_csv(
+        workcenter_eligibility_path,
+        dtype={
+            'workcenterid': str,
             'process': str
         }
     )
 
-    # read which resources can perform which processes
-    resource_process_eligibility = pd.read_csv(
-        resource_process_eligibility_path,
+    # read labor capacity by process
+    labor_capacity = pd.read_csv(
+        labor_capacity_path,
         dtype={
-            'resourceid': str,
+            'labor_pool': str
+        }
+    )
+
+    # read which labor pools can support which processes
+    labor_eligibility = pd.read_csv(
+        labor_eligibility_path,
+        dtype={
+            'labor_pool': str,
             'process': str
         }
     )
@@ -125,17 +135,17 @@ def load_and_prepare_data():
         raise ValueError(f'Missing cycle time rows for itemids: {missing_items}')
 
     # calculate operations times based on qty
-    df['total_production_days'] = (
+    df['work_content_days'] = (
         df['qty'] * df['cycle_time_days']
     )
 
     # burn-in in sets of 4
-    df.loc[df['sequence'] == 3, 'total_production_days'] = np.ceil(
+    df.loc[df['sequence'] == 3, 'work_content_days'] = np.ceil(
         df.loc[df['sequence'] == 3, 'qty'] / 4
     )
 
     # fqc set to 1 day for all batch quantities
-    df.loc[df['sequence'] == 4, 'total_production_days'] = 1
+    df.loc[df['sequence'] == 4, 'work_content_days'] = 1
 
     # initial sort of values
     df = df.sort_values(
@@ -159,4 +169,11 @@ def load_and_prepare_data():
         ]
     ).reset_index(drop=True)
 
-    return df, non_production_orders, resources, workcenters, resource_process_eligibility
+    return (
+        df,
+        non_production_orders,
+        workcenters,
+        workcenter_eligibility,
+        labor_capacity,
+        labor_eligibility
+    )

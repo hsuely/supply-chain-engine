@@ -1,5 +1,7 @@
 from ortools.sat.python import cp_model
 import pandas as pd
+import itertools
+import math
 
 
 SCALE = 4
@@ -33,17 +35,15 @@ def working_day_offset(schedule_start_date, target_date):
 
 
 def build_schedule(df,
-                   resources,
                    workcenters,
-                   resource_process_eligibility,
+                   workcenter_eligibility,
+                   labor_capacity,
+                   labor_eligibility,
                    schedule_start_date):
 
     model = cp_model.CpModel()
 
     df = df.copy()
-
-    # convert offset into solver time units
-    df['duration_int'] = (df['total_production_days'] * SCALE).astype(int)
 
     # convert earlieststartdate to offset equivalent, or 0 if empty
     df['earliest_start_offset'] = df['earlieststartdate'].apply(
@@ -66,50 +66,122 @@ def build_schedule(df,
     # set maximum possible schedule length, maximum earlieststartdate + duration of all batches + 10 day buffer
     buffer_days = 10
 
+    # use a conservative horizon based on the slowest possible interpretation
+    max_work_content_int = (
+            df['work_content_days'].fillna(0).sum() * SCALE * 2
+    )
+
     horizon = int(
-        df['duration_int'].sum()
+        max_work_content_int
         + df['earliest_start_int'].max()
         + buffer_days * SCALE
     )
 
     tasks = {}
-    resource_to_intervals = {}
-    workcenter_pool_to_intervals = {}
-    workcenter_pool_to_demands = {}
+    labor_pool_to_intervals = {}
+    labor_pool_to_demands = {}
+    workcenter_to_intervals = {}
+    workcenter_to_demands = {}
     batch_info = {}
 
     """
     tasks = each batch operation step and its solver parameters
-    resource_to_intervals = maps labor resources to assigned operation intervals
-    workcenter_to_intervals = maps physical workcenters to assigned operation intervals
-    workcenter_to_demands = demand values used for workcenter cumulative capacity
+    labor_pool_to_intervals = maps labor process pools to operation intervals
+    labor_pool_to_demands = demand values used for labor pool capacity
+    workcenter_to_intervals = maps physical workcenters to operation intervals
+    workcenter_to_demands = demand values used for physical workcenter capacity
     batch_info = key batch-level data used in the objective function
     """
 
-    # calculate pooled workcenter capacity by process
-    workcenter_pool_capacity = (
+    # calculate physical workcenter capacity by workcenterid
+    workcenter_capacity = (
         workcenters
-        .groupby('process')['capacity']
-        .sum()
+        .set_index('workcenterid')['capacity']
         .astype(int)
         .to_dict()
     )
+
+    def get_eligible_workcenters(process):
+        """
+        Get physical workcenters that can support a process.
+        """
+
+        eligible_workcenters = (
+            workcenter_eligibility[
+                workcenter_eligibility['process'] == process
+                ]['workcenterid']
+            .dropna()
+            .unique()
+            .tolist()
+        )
+
+        return eligible_workcenters
+
+    # calculate pooled labor capacity by process
+    capacity_scale = 4
+
+    labor_pool_capacity = (
+        labor_capacity
+        .set_index('labor_pool')['daily_capacity']
+        .mul(capacity_scale)
+        .round()
+        .astype(int)
+        .to_dict()
+    )
+
+    def generate_labor_modes(process):
+        """
+        Generate valid labor pool combinations for a process.
+
+        Each mode contains:
+        - mode_name
+        - labor_pools
+        - labor_rate
+        """
+
+        eligible_pools = (
+            labor_eligibility[
+                labor_eligibility['process'] == process
+                ]['labor_pool']
+            .dropna()
+            .unique()
+            .tolist()
+        )
+
+        if not eligible_pools:
+            return []
+
+        modes = []
+
+        for combination_size in range(1, len(eligible_pools) + 1):
+            for labor_pool_combo in itertools.combinations(
+                    eligible_pools,
+                    combination_size
+            ):
+                labor_rate = sum(
+                    labor_pool_capacity[labor_pool]
+                    for labor_pool in labor_pool_combo
+                )
+
+                mode_name = '+'.join(labor_pool_combo)
+
+                modes.append({
+                    'mode_name': mode_name,
+                    'labor_pools': list(labor_pool_combo),
+                    'labor_rate': labor_rate
+                })
+
+        return modes
 
     # create one task for each batch's routing rows
     for idx, row in df.iterrows():
         batchid = row['batchid']
         sequence = int(row['sequence'])
         process = row['process']
+        work_content_days = float(row['work_content_days'])
 
         start = model.NewIntVar(0, horizon, f'start_{idx}')
         end = model.NewIntVar(0, horizon, f'end_{idx}')
-
-        interval = model.NewIntervalVar(
-            start,
-            int(row['duration_int']),
-            end,
-            f'interval_{idx}'
-        )
 
         tasks[idx] = {
             'batchid': batchid,
@@ -117,57 +189,185 @@ def build_schedule(df,
             'sequence': sequence,
             'start': start,
             'end': end,
-            'interval': interval,
-            'duration': int(row['duration_int']),
-            'resource_choices': {},
+            'interval': None,
+            'duration': None,
+            'mode_choices': {},
+            'workcenter_choices': {},
+            'assigned_labor_pool': None,
             'assigned_workcenter_pool': None
         }
 
-        # determine list of eligible resources for this task
-        eligible_resources = (
-            resource_process_eligibility[
-                resource_process_eligibility['process'] == process
-                ]['resourceid']
-            .tolist()
-        )
-
-        # selects an eligible resource for the task
+        # labor-driven operation: generate optional labor modes
         if int(row['labor_required']) > 0:
-            if not eligible_resources:
-                raise ValueError(f'No eligible resources found for process: {process}')
+            labor_modes = generate_labor_modes(process)
 
-            resource_presence_vars = []
+            mode_presence_vars = []
 
-            for resourceid in eligible_resources:
-                resource_presence = model.NewBoolVar(
-                    f'assigned_{idx}_{resourceid}'
+            for mode in labor_modes:
+                mode_name = mode['mode_name']
+                labor_rate = mode['labor_rate']
+
+                duration_int = int(
+                    math.ceil(
+                        (work_content_days * SCALE * capacity_scale)
+                        / labor_rate
+                    )
                 )
 
-                resource_interval = model.NewOptionalIntervalVar(
+                presence = model.NewBoolVar(
+                    f'presence_{idx}_{mode_name}'
+                )
+
+                optional_interval = model.NewOptionalIntervalVar(
                     start,
-                    int(row['duration_int']),
+                    duration_int,
                     end,
-                    resource_presence,
-                    f'interval_{idx}_{resourceid}'
+                    presence,
+                    f'interval_{idx}_{mode_name}'
                 )
 
-                tasks[idx]['resource_choices'][resourceid] = resource_presence
+                tasks[idx]['mode_choices'][mode_name] = {
+                    'presence': presence,
+                    'duration': duration_int,
+                    'labor_pools': mode['labor_pools']
+                }
 
-                resource_to_intervals.setdefault(resourceid, []).append(
-                    resource_interval
+                mode_presence_vars.append(presence)
+
+                for labor_pool in mode['labor_pools']:
+                    labor_pool_to_intervals.setdefault(
+                        labor_pool,
+                        []
+                    ).append(optional_interval)
+
+                    labor_pool_to_demands.setdefault(
+                        labor_pool,
+                        []
+                    ).append(labor_pool_capacity[labor_pool])
+
+            model.AddExactlyOne(mode_presence_vars)
+
+        # non-labor operation: fixed duration interval
+        else:
+            duration_int = int(
+                math.ceil(work_content_days * SCALE)
+            )
+
+            interval = model.NewIntervalVar(
+                start,
+                duration_int,
+                end,
+                f'interval_{idx}'
+            )
+
+            tasks[idx]['interval'] = interval
+            tasks[idx]['duration'] = duration_int
+
+            # if non-labor task requires workcenter, choose one eligible physical workcenter
+            if int(row['workcenter_required']) > 0:
+                eligible_workcenters = get_eligible_workcenters(process)
+
+                if not eligible_workcenters:
+                    raise ValueError(
+                        f'No eligible workcenters found for process: {process}'
+                    )
+
+                workcenter_presence_vars = []
+
+                for workcenterid in eligible_workcenters:
+                    if workcenterid not in workcenter_capacity:
+                        raise ValueError(
+                            f'No capacity found for workcenter: {workcenterid}'
+                        )
+
+                    workcenter_presence = model.NewBoolVar(
+                        f'workcenter_{idx}_{workcenterid}'
+                    )
+
+                    optional_workcenter_interval = model.NewOptionalIntervalVar(
+                        start,
+                        duration_int,
+                        end,
+                        workcenter_presence,
+                        f'workcenter_interval_{idx}_{workcenterid}'
+                    )
+
+                    tasks[idx]['workcenter_choices'][workcenterid] = {
+                        'presence': workcenter_presence,
+                        'workcenterid': workcenterid,
+                        'mode_name': None
+                    }
+
+                    workcenter_presence_vars.append(workcenter_presence)
+
+                    workcenter_to_intervals.setdefault(
+                        workcenterid,
+                        []
+                    ).append(optional_workcenter_interval)
+
+                    workcenter_to_demands.setdefault(
+                        workcenterid,
+                        []
+                    ).append(1)
+
+                model.AddExactlyOne(workcenter_presence_vars)
+
+        # labor-driven tasks may also require one eligible physical workcenter
+        if int(row['labor_required']) > 0 and int(row['workcenter_required']) > 0:
+            eligible_workcenters = get_eligible_workcenters(process)
+
+            if not eligible_workcenters:
+                raise ValueError(
+                    f'No eligible workcenters found for process: {process}'
                 )
 
-                resource_presence_vars.append(resource_presence)
+            for mode_name, mode_info in tasks[idx]['mode_choices'].items():
+                mode_presence = mode_info['presence']
+                duration_int = mode_info['duration']
 
-            model.AddExactlyOne(resource_presence_vars)
+                workcenter_presence_vars = []
 
-        # assigns workcenter for the task if the process requires it
-        workcenter_capacity = int(workcenter_pool_capacity.get(process, 0))
+                for workcenterid in eligible_workcenters:
+                    if workcenterid not in workcenter_capacity:
+                        raise ValueError(
+                            f'No capacity found for workcenter: {workcenterid}'
+                        )
 
-        if workcenter_capacity > 0:
-            workcenter_pool_to_intervals.setdefault(process, []).append(interval)
-            workcenter_pool_to_demands.setdefault(process, []).append(1)
-            tasks[idx]['assigned_workcenter_pool'] = f'{process}_pool'
+                    workcenter_presence = model.NewBoolVar(
+                        f'workcenter_{idx}_{mode_name}_{workcenterid}'
+                    )
+
+                    optional_workcenter_interval = model.NewOptionalIntervalVar(
+                        start,
+                        duration_int,
+                        end,
+                        workcenter_presence,
+                        f'workcenter_interval_{idx}_{mode_name}_{workcenterid}'
+                    )
+
+                    tasks[idx]['workcenter_choices'][
+                        f'{mode_name}|{workcenterid}'
+                    ] = {
+                        'presence': workcenter_presence,
+                        'workcenterid': workcenterid,
+                        'mode_name': mode_name
+                    }
+
+                    workcenter_presence_vars.append(workcenter_presence)
+
+                    workcenter_to_intervals.setdefault(
+                        workcenterid,
+                        []
+                    ).append(optional_workcenter_interval)
+
+                    workcenter_to_demands.setdefault(
+                        workcenterid,
+                        []
+                    ).append(1)
+
+                model.Add(
+                    sum(workcenter_presence_vars) == mode_presence
+                )
 
     # rule: each batch must be run in sequence until fully complete
     for batchid in df['batchid'].unique():
@@ -203,18 +403,25 @@ def build_schedule(df,
             'qty': int(batch_rows['qty'].max())
         }
 
-    # rule: each labor resource can only work on one operation at a time
-    for resourceid, intervals in resource_to_intervals.items():
-        model.AddNoOverlap(intervals)
+    # rule: each labor process pool cannot exceed its available capacity
+    for labor_pool, intervals in labor_pool_to_intervals.items():
+        capacity_value = int(labor_pool_capacity[labor_pool])
+        demands = labor_pool_to_demands[labor_pool]
 
-    # rule: each workcenter process pool cannot exceed its total capacity
-    for process, intervals in workcenter_pool_to_intervals.items():
-        capacity_value = int(workcenter_pool_capacity[process])
+        model.AddCumulative(
+            intervals,
+            demands,
+            capacity_value
+        )
+
+    # rule: each physical workcenter cannot exceed its available capacity
+    for workcenterid, intervals in workcenter_to_intervals.items():
+        capacity_value = int(workcenter_capacity[workcenterid])
 
         if capacity_value == 1:
             model.AddNoOverlap(intervals)
         else:
-            demands = workcenter_pool_to_demands[process]
+            demands = workcenter_to_demands[workcenterid]
 
             model.AddCumulative(
                 intervals,
@@ -300,16 +507,21 @@ def build_schedule(df,
 
     # output results
     for idx, row in df.iterrows():
-        assigned_resource = None
+        assigned_resource = tasks[idx]['assigned_labor_pool']
 
-        for resourceid, presence_var in tasks[idx]['resource_choices'].items():
-            if solver.Value(presence_var) == 1:
-                assigned_resource = resourceid
-                break
-
-        assigned_workcenter = None
+        if tasks[idx]['mode_choices']:
+            for mode_name, mode_info in tasks[idx]['mode_choices'].items():
+                if solver.Value(mode_info['presence']) == 1:
+                    assigned_resource = mode_name
+                    break
 
         assigned_workcenter = tasks[idx]['assigned_workcenter_pool']
+
+        if tasks[idx]['workcenter_choices']:
+            for choice_name, choice_info in tasks[idx]['workcenter_choices'].items():
+                if solver.Value(choice_info['presence']) == 1:
+                    assigned_workcenter = choice_info['workcenterid']
+                    break
 
         results.append({
             'batchid': row['batchid'],
@@ -327,7 +539,8 @@ def build_schedule(df,
             'prod': row['prod'],
             'earlieststartdate': row['earlieststartdate'],
             'due_date': row['date'],
-            'total_production_days': row['total_production_days'],
+            'work_content_days': row['work_content_days'],
+            'duration_days': (solver.Value(tasks[idx]['end']) - solver.Value(tasks[idx]['start'])) / SCALE,
             'start_day': solver.Value(tasks[idx]['start']) / SCALE,
             'end_day': solver.Value(tasks[idx]['end']) / SCALE
         })

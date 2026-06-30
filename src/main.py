@@ -24,7 +24,7 @@ def main():
     OUTPUT_DIR.mkdir(exist_ok=True)
 
     # 1. Load and prepare order/routing/resource data
-    df, non_production_orders, resources, workcenters, resource_process_eligibility = load_and_prepare_data()
+    df, non_production_orders, workcenters, workcenter_eligibility, labor_capacity, labor_eligibility = load_and_prepare_data()
 
     print('\n=== LOADED DATA ===')
     print(
@@ -44,7 +44,7 @@ def main():
                 'date',
                 'labor_required',
                 'workcenter_required',
-                'total_production_days'
+                'work_content_days'
             ]
         ]
     )
@@ -52,9 +52,10 @@ def main():
     # 2. Run OR-Tools scheduler
     schedule_results = build_schedule(
         df,
-        resources,
         workcenters,
-        resource_process_eligibility,
+        workcenter_eligibility,
+        labor_capacity,
+        labor_eligibility,
         schedule_start_date=SCHEDULE_START_DATE
     )
 
@@ -75,7 +76,8 @@ def main():
                 'priority',
                 'earlieststartdate',
                 'due_date',
-                'total_production_days',
+                'work_content_days',
+                'duration_days',
                 'start_day',
                 'end_day'
             ]
@@ -105,6 +107,8 @@ def main():
                 'priority',
                 'earlieststartdate',
                 'due_date',
+                'work_content_days',
+                'duration_days',
                 'planned_start_date',
                 'planned_end_date',
                 'days_late',
@@ -154,6 +158,8 @@ def main():
                 'priority',
                 'earlieststartdate',
                 'due_date',
+                'total_work_content_days',
+                'total_duration_days',
                 'planned_batch_start_date',
                 'planned_batch_end_date',
                 'max_days_late',
