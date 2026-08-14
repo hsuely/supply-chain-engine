@@ -4,6 +4,25 @@ from calendar_utils import (
     add_working_days_ceiling
 )
 
+
+def add_working_days_from_date(start_date, days_to_add):
+    """
+    Add working days to a calendar date.
+    Weekends are skipped.
+    """
+
+    current_date = pd.Timestamp(start_date).normalize()
+    days_added = 0
+
+    while days_added < days_to_add:
+        current_date += pd.Timedelta(days=1)
+
+        if current_date.weekday() < 5:
+            days_added += 1
+
+    return current_date.date()
+
+
 def build_non_production_summary(non_production_orders):
     """
     converts non production rows into summary format
@@ -26,6 +45,7 @@ def build_non_production_summary(non_production_orders):
     output['batchid'] = ''
     output['planned_batch_start_date'] = output['due_date']
     output['planned_batch_end_date'] = output['due_date']
+    output['planned_ship_date'] = output['due_date']
     output['max_days_late'] = 0
     output['status'] = 'passthrough'
 
@@ -40,6 +60,7 @@ def build_non_production_summary(non_production_orders):
         'priority',
         'prod',
         'earlieststartdate',
+        'planned_ship_date',
         'due_date',
         'planned_batch_start_date',
         'planned_batch_end_date',
@@ -50,6 +71,7 @@ def build_non_production_summary(non_production_orders):
     existing_columns = [col for col in desired_columns if col in output.columns]
 
     return output[existing_columns]
+
 
 def format_operations_schedule(schedule_df, schedule_start_date):
     """
@@ -73,13 +95,13 @@ def format_operations_schedule(schedule_df, schedule_start_date):
     output['due_date'] = pd.to_datetime(output['due_date']).dt.date
     output['earlieststartdate'] = pd.to_datetime(output['earlieststartdate']).dt.date
 
-    # calculate days_late against due_date
+    # calculate operation-level days_late against due_date
     output['days_late'] = (
         pd.to_datetime(output['planned_end_date']) -
         pd.to_datetime(output['due_date'])
     ).dt.days.clip(lower=0)
 
-    # add column for status based on days_late
+    # add column for operation-level status based on days_late
     output['status'] = output['days_late'].apply(
         lambda x: 'late' if x > 0 else 'on time'
     )
@@ -140,7 +162,7 @@ def format_operations_schedule(schedule_df, schedule_start_date):
 
 def build_order_summary(operations_schedule_df):
     """
-    summary of operations schedule by batch showing planned start and end date for full sequence of operations
+    summary of operations schedule by batch showing planned start, end, and ship date
     uses batchid to keep identical salesid/itemid combinations separate in the list
     """
 
@@ -166,10 +188,20 @@ def build_order_summary(operations_schedule_df):
             prod=('prod', 'max'),
             qty=('qty', 'max'),
             total_work_content_days=('work_content_days', 'sum'),
-            total_duration_days=('duration_days', 'sum'),
-            max_days_late=('days_late', 'max')
+            total_duration_days=('duration_days', 'sum')
         )
     )
+
+    # planned ship date is two working days after production completion
+    summary['planned_ship_date'] = summary['planned_batch_end_date'].apply(
+        lambda x: add_working_days_from_date(x, 2)
+    )
+
+    # calculate lateness using planned ship date instead of planned batch end date
+    summary['max_days_late'] = (
+        pd.to_datetime(summary['planned_ship_date']) -
+        pd.to_datetime(summary['due_date'])
+    ).dt.days.clip(lower=0)
 
     summary['status'] = summary['max_days_late'].apply(
         lambda x: 'late' if x > 0 else 'on time'
@@ -191,5 +223,32 @@ def build_order_summary(operations_schedule_df):
             True
         ]
     ).reset_index(drop=True)
+
+    # reorder columns for readability
+    desired_columns = [
+        'batchid',
+        'salesid',
+        'accountnum',
+        'custname',
+        'itemid',
+        'product',
+        'qty',
+        'priority',
+        'prod',
+        'earlieststartdate',
+        'planned_ship_date',
+        'due_date',
+        'planned_batch_start_date',
+        'planned_batch_end_date',
+        'total_work_content_days',
+        'total_duration_days',
+        'max_days_late',
+        'status'
+    ]
+
+    existing_columns = [col for col in desired_columns if col in summary.columns]
+    remaining_columns = [col for col in summary.columns if col not in existing_columns]
+
+    summary = summary[existing_columns + remaining_columns]
 
     return summary
